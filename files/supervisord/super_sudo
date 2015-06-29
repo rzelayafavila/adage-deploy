@@ -1,1 +1,1 @@
-tribe ALL = (root) NOPASSWD:/usr/bin/supervisorctl restart tribe
+adage ALL = (root) NOPASSWD:/usr/bin/supervisorctl restart adage

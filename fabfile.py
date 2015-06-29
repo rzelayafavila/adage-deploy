@@ -1,8 +1,8 @@
 """
-Fab tasks to provision a Tribe server.
+Fab tasks to provision an Adage server.
 
 Use these only once to setup an ubuntu server. For day to day usage and
-development you should use the tribe fabfile.
+development you should use the adage fabfile.
 """
 
 from fabric.api import put, get, run, sudo, execute
@@ -54,10 +54,10 @@ def _install_postgres():
 
 def install_system_packages():
     """
-    Install all packages required for Tribe.
+    Install all packages required for Adage.
 
     Install all python, postgres, elasticsearch, and other packages required to deploy and manage
-    a Tribe instance.
+    an Adage instance.
     """
     sudo('apt-get update')
     execute(_install_elasticsearch)
@@ -85,22 +85,22 @@ script.disable_dynamic: true
 bootstrap.mlockall: true
 path.data: /var/elastic
 path.logs: /var/log/elasticsearch
-cluster.name: tribesearch
+cluster.name: adagesearch
 ' | sudo tee -a /etc/elasticsearch/elasticsearch.yml""")
 
 
-def create_tribe_user():
+def create_adage_user():
     """
-    Create a tribe user.
+    Create a adage user.
 
     Before running this command, make sure that you have created a file named authorized_keys in
     this directory that contains the public keys for people that will need to be able to access this
-    instance of Tribe as a user "tribe".
+    instance of Adage as a user "adage".
     """
-    sudo('adduser tribe --disabled-password')
-    sudo('mkdir /home/tribe/.ssh', user="tribe")
-    put('authorized_keys', '/home/tribe/.ssh/', use_sudo=True)
-    sudo('chown tribe:tribe /home/tribe/.ssh/authorized_keys')
+    sudo('adduser adage --disabled-password')
+    sudo('mkdir /home/adage/.ssh', user="adage")
+    put('authorized_keys', '/home/adage/.ssh/', use_sudo=True)
+    sudo('chown adage:adage /home/adage/.ssh/authorized_keys')
 
 
 def create_deploy_keys():
@@ -111,29 +111,29 @@ def create_deploy_keys():
     public key as deploy_rsa.pub. Add this deployment key to bitbucket to be able
     to clone the mercurial repository.
     """
-    sudo("ssh-keygen -t rsa", user="tribe")
-    get('/home/tribe/.ssh/id_rsa.pub', 'deploy_rsa.pub')
+    sudo("ssh-keygen -t rsa", user="adage")
+    get('/home/adage/.ssh/id_rsa.pub', 'deploy_rsa.pub')
 
 
-def clone_tribe_repo():
+def clone_adage_repo():
     """
-    Clone the Tribe repository.
+    Clone the Adage repository.
 
-    This command clones the tribe repository from bitbucket into /home/tribe/tribe. This will be
+    This command clones the adage repository from bitbucket into /home/adage/adage. This will be
     the location where the python code for the server is stored.
     """
-    sudo('hg clone ssh://hg@bitbucket.org/greenelab/tribe /home/tribe/tribe', user="tribe")
+    sudo('hg clone ssh://hg@bitbucket.org/greenelab/adage /home/adage/adage', user="adage")
 
 
 def setup_nginx():
     """
     Setup nginx.
 
-    This command will remove the default nginx site, and put a configuration file for tribe into
+    This command will remove the default nginx site, and put a configuration file for adage into
     the sites-enabled folder.
     """
     sudo('rm -f /etc/nginx/sites-enabled/default')
-    put('files/nginx/tribe-nginx.conf', '/etc/nginx/sites-enabled/', use_sudo=True)
+    put('files/nginx/adage-nginx.conf', '/etc/nginx/sites-enabled/', use_sudo=True)
     sudo('/etc/init.d/nginx restart')
 
 
@@ -141,31 +141,31 @@ def setup_virtualenv():
     """
     Setup Python Virtual Envrionment.
 
-    This command will create a virtual environment for Tribe in /home/tribe/.virtualenvs. This is
-    the virtualenv that will contain the python packages that are pip installed from Tribe's
+    This command will create a virtual environment for Adage in /home/adage/.virtualenvs. This is
+    the virtualenv that will contain the python packages that are pip installed from Adage's
     requirements.txt
     """
-    sudo('mkdir -p /home/tribe/.virtualenvs', user='tribe')
-    sudo('virtualenv /home/tribe/.virtualenvs/tribe', user='tribe')
+    sudo('mkdir -p /home/adage/.virtualenvs', user='adage')
+    sudo('virtualenv /home/adage/.virtualenvs/adage', user='adage')
 
 
 def setup_supervisor():
     """
     Setup supervisor.
 
-    Supervisor allows us to control gunicorn instances of Tribe. gunicorn can be installed in the
-    virtualenv, and the "tribe" user can restart the server without requiring unrestricted sudo.
+    Supervisor allows us to control gunicorn instances of Adage. gunicorn can be installed in the
+    virtualenv, and the "adage" user can restart the server without requiring unrestricted sudo.
     """
-    put('files/supervisord/tribe_super.conf', '/etc/supervisor/conf.d/tribe_super.conf', use_sudo=True)
+    put('files/supervisord/adage_super.conf', '/etc/supervisor/conf.d/adage_super.conf', use_sudo=True)
     sudo('sudo /etc/init.d/supervisor restart')
 
 
 def setup_sudo_restart_super():
     """
-    Allow the tribe user to restart Supervisor.
+    Allow the adage user to restart Supervisor.
 
-    Create a supervisor group, add tribe to it, upload a sudo configuration that allows
-    the tribe user to perform the restart procedure for the tribe server.
+    Create a supervisor group, add adage to it, upload a sudo configuration that allows
+    the adage user to perform the restart procedure for the adage server.
     """
     put('files/supervisord/super_sudo', '/etc/sudoers.d/super_sudo', use_sudo=True, mode=0440)
     sudo('chown root:root /etc/sudoers.d/super_sudo')
