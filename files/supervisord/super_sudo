@@ -1,1 +1,2 @@
 adage ALL = (root) NOPASSWD:/usr/bin/supervisorctl restart adage
+adage ALL = NOPASSWD: /bin/bash -l -c supervisorctl restart adage
