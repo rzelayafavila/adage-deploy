@@ -93,6 +93,8 @@ def launch_ec2_instance():
     ec2 = s.resource('ec2')
     
     print("Launching new EC2 instance...")
+    # do this to setup the ubuntu key; do it here so we can override env.hosts below
+    execute(adage_server.setup_ec2_conn, use_config=CONFIG)
     inst = ec2.create_instances(**config.AWS_CONFIG['ec2_params'])
     inst[0].wait_until_running()
     # override the current env.hosts since we are launching a new instance
@@ -103,7 +105,6 @@ def launch_ec2_instance():
     # this is a little hackish, but it ensures the next command will not timeout because
     # the server hasn't actually finished coming online yet...
     print("Waiting for instance to come online...")
-    # TODO: test this!
     with settings(hide('running'), warn_only=True):
         execute(reboot, command='hostname', hosts=[ 'ubuntu@' + h for h in env.hosts ])
     print("New instance is now running at: {0}".format(env.hosts[0]))
@@ -396,8 +397,6 @@ def deploy():
     """
     Execute a complete deployment to provision a new adage server (replaces steps.sh)
     """
-    # execute(adage_server.load_aws_key, CONFIG['aws_ubuntu_key'])
-    execute(adage_server.setup_ec2_conn, use_config=CONFIG)
     execute(launch_ec2_instance)
     hostlist = [ 'ubuntu@' + h for h in env.hosts ]
     execute(configure_system, hosts=hostlist)
@@ -405,7 +404,6 @@ def deploy():
     execute(reboot, wait=70, hosts=hostlist)
     execute(configure_adage, hosts=hostlist)
     hostlist = [ 'adage@' + h for h in env.hosts ]
-    # hostlist=['adage@52.2.135.106']
     print("hosts=%s" % hostlist)
     execute(adage_server.setup_ec2_conn, hosts=hostlist)    # allow to default to adage_server CONFIG
     execute(adage_server.deploy, hosts=hostlist)
