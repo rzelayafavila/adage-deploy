@@ -41,7 +41,7 @@ from fabric.contrib.console import confirm
 # but this structure will allow us to break up the deployment scripts into smaller modules
 # in the future, if we choose.
 # BASE_DIR is equivalent to a relative path of ../../adage-server/
-BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'adage-server')
+BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'adage-server-mhuyck')
 if BASE_DIR not in sys.path:
     sys.path.insert(0, os.path.join(BASE_DIR, 'fabfile'))
 # CONFIG_DIR is equivalent to a path of BASE_DIR/adage/adage/
@@ -176,7 +176,7 @@ def install_system_packages():
     execute(_install_elasticsearch)
     execute(_install_python_deps)
     execute(_install_postgres)
-    sudo('apt-get -y -q install nodejs-legacy build-essential nginx npm supervisor')
+    sudo('apt-get -y -q install nodejs-legacy build-essential nginx npm supervisor phantomjs')
     sudo('npm -g install grunt-cli karma bower')
 
 
@@ -251,6 +251,12 @@ create database {NAME};
     sudo("chmod 600 /home/adage/.pgpass", user="adage")
     sudo("echo '{HOST}:{PORT}:{NAME}:{USER}:{PASSWORD}' >> /home/adage/.pgpass".format( \
         **CONFIG['databases']['default']), user="adage")
+    # TODO Test that these additions work as planned
+    ## create .pg_service.conf with connection parameters for the adage user
+    sudo("touch /home/adage/.pg_service.conf", user="adage")
+    sudo("chmod 600 /home/adage/.pg_service.conf", user="adage")
+    sudo("echo -e '[{NAME}]\nhost={HOST}\nport={PORT}\nuser={USER}' >> /home/adage/.pg_service.conf".format( \
+        **CONFIG['databases']['default']), user="adage")
 
 
 @task(alias='cdk')
@@ -293,6 +299,7 @@ def clone_adage_repo():
     ## this method is simpler but requires using a password, so it's less desirable --> run('wget -q https://bitbucket.org/greenelab/get_pseudomonas/raw/281f4fe00240e3effb4e5bc9a516e8a3716b9ede/get_pseudo_sdrf.py')
     sudo('hg clone --noupdate ssh://hg@bitbucket.org/greenelab/get_pseudomonas /home/adage/temp', user="adage")
     sudo('hg cat /home/adage/temp/get_pseudo_sdrf.py --rev tip -o "/home/adage/%s"', user="adage")
+    sudo('hg cat /home/adage/temp/gen_spreadsheets.py --rev tip -o "/home/adage/%s"', user="adage")
     sudo('rm -rf /home/adage/temp', user="adage")
 
 
@@ -320,6 +327,8 @@ def setup_virtualenv():
     """
     sudo('mkdir -p /home/adage/.virtualenvs', user='adage')
     sudo('virtualenv /home/adage/.virtualenvs/adage', user='adage')
+    # TODO add 'act' alias here
+    # alias act='source ~/.virtualenvs/adage/bin/activate'
 
 
 @task
@@ -392,18 +401,52 @@ def configure_adage():
     setup_sudo_restart_super()
 
 
+@task(alias='dev-ubuntu')
+def setup_dev_ubuntu_conn():
+    env.hosts = [ 'ubuntu@192.168.82.139' ]
+    env.key_filename = '~/.ssh/aws-clone.pem'
+
+
+@task(alias='dev-adage')
+def setup_dev_adage_conn():
+    # env.hosts = [ 'adage@192.168.82.139' ]
+    # env.key_filename = '~/.ssh/fgtech'
+    execute(adage_server.setup_ec2_conn)
+
 @task(default=True)
 def deploy():
     """
     Execute a complete deployment to provision a new adage server (replaces steps.sh)
     """
     execute(launch_ec2_instance)
-    hostlist = [ 'ubuntu@' + h for h in env.hosts ]
+    # capture the IP address for the host we've just launched and build a hostlist
+    hosts = env.hosts
+    hostlist = [ 'ubuntu@' + h for h in hosts ]
+    # hostlist = [ 'ubuntu@192.168.82.139' ]
+    # env.key_filename = '~/.ssh/aws-clone.pem'
     execute(configure_system, hosts=hostlist)
     print("rebooting...")
     execute(reboot, wait=70, hosts=hostlist)
     execute(configure_adage, hosts=hostlist)
-    hostlist = [ 'adage@' + h for h in env.hosts ]
+    # now tweak the hostlist for remaining configuration via the adage user
+    hostlist = [ 'adage@' + h for h in hosts ]
+    print("hosts=%s" % hostlist)
+    execute(adage_server.setup_ec2_conn, hosts=hostlist)    # allow to default to adage_server CONFIG
+    execute(adage_server.deploy, hosts=hostlist)
+
+@task
+def testkey():
+    execute(adage_server.setup_ec2_conn, use_config=CONFIG)
+    hosts = env.hosts
+    hostlist = [ env.host_string ]
+    execute(configure_adage, hosts=hostlist)
+    print("hostlist=%s" % hostlist)
+    print("env=%s" % env)
+
+@task
+def resumedeploy():
+    # hostlist = [ 'adage@' + h for h in hosts ]
+    hostlist=['adage@54.211.254.254']
     print("hosts=%s" % hostlist)
     execute(adage_server.setup_ec2_conn, hosts=hostlist)    # allow to default to adage_server CONFIG
     execute(adage_server.deploy, hosts=hostlist)
