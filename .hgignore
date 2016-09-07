@@ -1,4 +1,5 @@
 ~$
 authorized_keys
+deploy_rsa
 deploy_rsa.pub
 .pyc$
