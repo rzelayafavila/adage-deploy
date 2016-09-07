@@ -45,7 +45,7 @@ from fabric.contrib.console import confirm
 
 # BASE_DIR is equivalent to a relative path of ../../adage-server/
 BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), 'adage-server-mhuyck'
+    os.path.abspath(__file__))), 'adage-server-github'
 )
 if BASE_DIR not in sys.path:
     sys.path.insert(0, os.path.join(BASE_DIR, 'fabfile'))
@@ -113,8 +113,8 @@ def launch_ec2_instance():
     ]
     env.user = 'ubuntu'
     print("New instance launching at: {0}".format(env.hosts[0]))
-    # this is a little hackish, but it ensures the next command will not timeout because
-    # the server hasn't actually finished coming online yet...
+    # this is a little hackish, but it ensures the next command will not
+    # timeout because the server hasn't actually finished coming online yet...
     print("Waiting for instance to come online...")
     with settings(hide('running'), warn_only=True):
         execute(reboot, command='hostname', hosts=[
@@ -291,6 +291,20 @@ create database {NAME};
     )
 
 
+@task(alias='adk')
+def add_deploy_key():
+    """
+    Add deployment keys.
+    
+    This command takes the private key referenced in 
+    AWS_CONFIG['deploy']['keyfile'] and uploads it to the server so it can
+    access the GitHub repository (which needs to have
+    AWS_CONFIG['deploy']['keyfile_pub'] as a deployment key for this to work).
+    """
+    put(config.AWS_CONFIG['deploy']['keyfile'], '/home/adage/.ssh/id_rsa',
+        use_sudo=True, mode=0600)
+    sudo('chown adage:adage /home/adage/.ssh/id_rsa')
+
 @task(alias='cdk')
 def create_deploy_keys():
     """
@@ -300,20 +314,23 @@ def create_deploy_keys():
     the public key as deploy_rsa.pub. Add this deployment key to bitbucket to
     be able to clone the mercurial repositories.
     """
-    sudo("cd /home/adage/.ssh; ssh-keygen -f id_rsa -t rsa -N ''", user="adage")
-    get('/home/adage/.ssh/id_rsa.pub', 'deploy_rsa.pub', use_sudo=True)
-    local('cat deploy_rsa.pub')
-    if not confirm(
-        """A deployment key has been saved in deploy_rsa.pub (displayed above). 
-Please upload this key to the adage repositories at 
-https://bitbucket.org/greenelab/adage-server/admin/deploy-keys/ *and* 
-https://bitbucket.org/greenelab/greenelab.bitbucket.org/admin/deploy-keys/ *and* 
-https://bitbucket.org/greenelab/get_pseudomonas/admin/deploy-keys/ ,
-following the instructions at
-https://confluence.atlassian.com/display/BITBUCKET/Use+deployment+keys now.
-Ready to proceed?"""):
-        abort("Okay, you're not ready. Sorry, but resuming is left as an "
-            "exercise for the user.")
+#     # new way (generate if needed):
+#     local("ssh-keygen -b 8192 -f deploy_rsa -t rsa -N ''")
+#     # old way:
+#     sudo("cd /home/adage/.ssh; ssh-keygen -f id_rsa -t rsa -N ''", user="adage")
+#     get('/home/adage/.ssh/id_rsa.pub', 'deploy_rsa.pub', use_sudo=True)
+#     local('cat deploy_rsa.pub')
+#     if not confirm(
+#         """A deployment key has been saved in deploy_rsa.pub (displayed above).
+# Please upload this key to the adage repositories at
+# https://bitbucket.org/greenelab/adage-server/admin/deploy-keys/ *and*
+# https://bitbucket.org/greenelab/greenelab.bitbucket.org/admin/deploy-keys/ *and*
+# https://bitbucket.org/greenelab/get_pseudomonas/admin/deploy-keys/ ,
+# following the instructions at
+# https://confluence.atlassian.com/display/BITBUCKET/Use+deployment+keys now.
+# Ready to proceed?"""):
+#         abort("Okay, you're not ready. Sorry, but resuming is left as an "
+#             "exercise for the user.")
 
 
 @task(alias='ca')
@@ -321,7 +338,7 @@ def clone_adage_repo():
     """
     Clone the Adage and the greenelab.bitbucket.org repositories.
 
-    This command clones the adage repository from bitbucket into
+    This command clones the adage repository from GitHub into
     /home/adage/adage-server and the greenelab.bitbucket.org repository into
     /home/adage/greenelab. The adage repository is the location where the python
     code for the server is stored and the greenelab repository contains extra
@@ -329,7 +346,7 @@ def clone_adage_repo():
     downloads *just* the get_pseudo_sdrf.py file from the get_pseudomonas
     repository for bootstrapping.
     """
-    sudo('hg clone ssh://hg@bitbucket.org/greenelab/adage-server '
+    sudo('git clone git@github.com:mhuyck/adage-server.git '
         '/home/adage/adage-server', user="adage")
     sudo('hg clone ssh://hg@bitbucket.org/greenelab/greenelab.bitbucket.org '
         '/home/adage/greenelab', user="adage")
@@ -428,7 +445,8 @@ def configure_adage():
     # password for your ssh key
     # also let it save to the default location -- we count on that for
     # the download.
-    create_deploy_keys()
+    # create_deploy_keys()
+    add_deploy_key()
     
     # you need to have put the adage deployment key on the bitbucket repo
     # before this step.
