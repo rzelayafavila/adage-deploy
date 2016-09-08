@@ -146,13 +146,16 @@ def _install_elasticsearch():
     run('wget -qO - http://packages.elasticsearch.org/GPG-KEY-elasticsearch |'
         ' sudo apt-key add -')
     run("echo -e "
-        "'deb http://packages.elasticsearch.org/elasticsearch/1.4/debian "
-        "stable main\n' | sudo tee -a /etc/apt/sources.list")
+        "'deb http://packages.elasticsearch.org/elasticsearch/1.7/debian "
+        "stable main\n' | sudo tee -a "
+        "/etc/apt/sources.list.d/elasticsearch-1.7.list")
     sudo('apt-get update')
-    sudo('apt-get -y -q install elasticsearch openjdk-7-jre')
+    sudo('apt-get -y -q install elasticsearch default-jdk')
     # this plugin lets us use 'network.host: _ec2_' in the config below
     run('cd /usr/share/elasticsearch; '
         'sudo bin/plugin install elasticsearch/elasticsearch-cloud-aws/2.4.2')
+    sudo('/bin/systemctl daemon-reload')
+    sudo('/bin/systemctl enable elasticsearch.service')
 
 
 def _install_python_deps():
@@ -291,7 +294,6 @@ create database {NAME};
     )
 
 
-@task(alias='adk')
 def add_deploy_key():
     """
     Add deployment keys.
@@ -305,7 +307,16 @@ def add_deploy_key():
         use_sudo=True, mode=0600)
     sudo('chown adage:adage /home/adage/.ssh/id_rsa')
 
-@task(alias='cdk')
+
+def add_known_hosts():
+    """
+    This command pre-populates the adage user's .ssh/known_hosts file so we
+    are not prompted to add a new key when we access github.com and
+    bitbucket.com for the first time
+    """
+    sudo('ssh-keyscan -t rsa github.com bitbucket.org > '
+        '/home/adage/.ssh/known_hosts', user="adage")
+
 def create_deploy_keys():
     """
     Create deployment keys.
@@ -314,23 +325,9 @@ def create_deploy_keys():
     the public key as deploy_rsa.pub. Add this deployment key to bitbucket to
     be able to clone the mercurial repositories.
     """
-#     # new way (generate if needed):
-#     local("ssh-keygen -b 8192 -f deploy_rsa -t rsa -N ''")
-#     # old way:
-#     sudo("cd /home/adage/.ssh; ssh-keygen -f id_rsa -t rsa -N ''", user="adage")
-#     get('/home/adage/.ssh/id_rsa.pub', 'deploy_rsa.pub', use_sudo=True)
-#     local('cat deploy_rsa.pub')
-#     if not confirm(
-#         """A deployment key has been saved in deploy_rsa.pub (displayed above).
-# Please upload this key to the adage repositories at
-# https://bitbucket.org/greenelab/adage-server/admin/deploy-keys/ *and*
-# https://bitbucket.org/greenelab/greenelab.bitbucket.org/admin/deploy-keys/ *and*
-# https://bitbucket.org/greenelab/get_pseudomonas/admin/deploy-keys/ ,
-# following the instructions at
-# https://confluence.atlassian.com/display/BITBUCKET/Use+deployment+keys now.
-# Ready to proceed?"""):
-#         abort("Okay, you're not ready. Sorry, but resuming is left as an "
-#             "exercise for the user.")
+    # TODO if the deployment key is not present, offer to generate one
+    # # new way (generate if needed):
+    # local("ssh-keygen -b 8192 -f deploy_rsa -t rsa -N ''")
 
 
 @task(alias='ca')
@@ -441,12 +438,9 @@ def configure_adage():
     # create a database for this instance
     setup_database()
     
-    # create the deployment key and retrieve it -- be prepared to enter a
-    # password for your ssh key
-    # also let it save to the default location -- we count on that for
-    # the download.
-    # create_deploy_keys()
+    # add deployment keys for access to source repository
     add_deploy_key()
+    add_known_hosts()
     
     # you need to have put the adage deployment key on the bitbucket repo
     # before this step.
@@ -490,11 +484,7 @@ def deploy():
     # capture the IP address for the host we've just launched and build a hostlist
     hosts = env.hosts
     hostlist = [ 'ubuntu@' + h for h in hosts ]
-    # hostlist = [ 'ubuntu@192.168.82.139' ]
-    # env.key_filename = '~/.ssh/aws-clone.pem'
     execute(configure_system, hosts=hostlist)
-    print("rebooting...")
-    execute(reboot, wait=70, hosts=hostlist)
     execute(configure_adage, hosts=hostlist)
     # now tweak the hostlist for remaining configuration via the adage user
     hostlist = [ 'adage@' + h for h in hosts ]
@@ -503,20 +493,11 @@ def deploy():
     execute(adage_server.setup_ec2_conn, hosts=hostlist)
     execute(adage_server.deploy, hosts=hostlist)
 
-@task
-def testkey():
-    execute(adage_server.setup_ec2_conn, use_config=CONFIG)
-    hosts = env.hosts
-    hostlist = [ env.host_string ]
-    execute(configure_adage, hosts=hostlist)
-    print("hostlist=%s" % hostlist)
-    print("env=%s" % env)
 
-@task
+@task(alias='resume')
 def resumedeploy():
-    # hostlist = [ 'adage@' + h for h in hosts ]
-    hostlist=['adage@54.211.254.254']
-    print("hosts=%s" % hostlist)
-    # allow to default to adage_server CONFIG
-    execute(adage_server.setup_ec2_conn, hosts=hostlist)
-    execute(adage_server.deploy, hosts=hostlist)
+    # Supply the key and hostlist needed to resume, then
+    # insert failed deployment steps to retry them below ---
+    # env.key_filename = ['~/.ssh/aws_ubuntu.pem']
+    # hostlist=['ubuntu@<aws_public_ip>']
+    # ---
