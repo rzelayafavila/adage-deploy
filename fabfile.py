@@ -1,30 +1,28 @@
 """Fab tasks to provision an Adage server.
 
 Use these only once to setup an ubuntu server. For day to day usage and 
-development you should use the adage-server fabfile. Typing "fab" by itself will 
-invoke the default 'deploy' command and attempt a full deploy from scratch.
+development you should use the adage-server fabfile. Specify your deployment
+configuration parameters in `adage-server/adage/adage/config.py` (using
+`config.py.template` as a guide) and then type "fab deploy_aws" to deploy to
+your AWS configuration or type "fab deploy_dev" to deploy a development
+server from scratch.
 
 If the private key for your aws ubuntu instance is kept in 
-~/.ssh/aws_ubuntu.pem, invoking adage_server.setup_ec2_conn() will attempt to 
+~/.ssh/aws_ubuntu.pem, invoking adage_server.setup_host_conn() will attempt to 
 use that for connections. (You will see warning messages if this file is 
 missing.)
 
-A default host is also set up in the adage_server.setup_ec2_conn() task, but 
-could be specified via the fab -H switch for a more traditional fab usage.
-
 To launch and configure a new ec2 instance, make sure your database 
 configuration (in adage-server/adage/adage/config.py under 
-TEST_CONFIG['databases']) does not conflict with a running instance, and use: 
-> fab
+AWS_CONFIG['databases']) does not conflict with a running instance, and use: 
+> fab deploy_aws
 """
-
-# TODO: enhance with AWS API to automate creating an instance for databases (see: https://boto3.readthedocs.org/en/latest/reference/services/rds.html#RDS.Client.create_db_instance)
-# TODO: simulate an ec2 instance on VMware for development (see: http://askubuntu.com/questions/153486/how-do-i-boot-ubuntu-cloud-images-in-vmware and https://cloud-images.ubuntu.com/trusty/current/)
 
 from __future__ import with_statement
 import logging
 import os, sys
 import pprint
+from time import sleep
 from boto3.session import Session
 from fabric.api import put, get, run, sudo, execute, reboot
 from fabric.api import env, local, settings, hide, abort, task, runs_once
@@ -60,7 +58,7 @@ import adage_server
 import config
 
 # Choose the configuration to use for the rest of this deployment from config.py
-CONFIG = config.DEPLOY_TEST_CONFIG
+CONFIG = config.CONFIG
 
 
 @task
@@ -77,7 +75,7 @@ def list_ec2_instances():
     """
     Show a list of all available ec2 instances
     """
-    s = Session(**dict((k,v) for k, v in config.AWS_CONFIG.items() \
+    s = Session(**dict((k,v) for k, v in config.AWS_DEPLOY.items()
         if k in ('aws_access_key_id', 'aws_secret_access_key', 'region_name')))
     ec2 = s.resource('ec2')
     for i in ec2.instances.all():
@@ -96,15 +94,16 @@ def launch_ec2_instance():
     https://boto3.readthedocs.org/en/latest/reference/services/ec2.html#EC2.ServiceResource.create_instances)
     """
     
-    s = Session(**dict((k,v) for k, v in config.AWS_CONFIG.items() \
+    s = Session(**dict((k,v) for k, v in config.AWS_DEPLOY.items()
         if k in ('aws_access_key_id', 'aws_secret_access_key', 'region_name')))
     ec2 = s.resource('ec2')
     
     print("Launching new EC2 instance...")
     # do this to setup the ubuntu key; we do it here so we can override
     # env.hosts below
-    execute(adage_server.setup_ec2_conn, use_config=CONFIG)
-    inst = ec2.create_instances(**config.AWS_CONFIG['ec2_params'])
+    execute(adage_server.setup_host_conn,
+        use_conn=config.AWS_DEPLOY['host_conn'])
+    inst = ec2.create_instances(**config.AWS_DEPLOY['ec2_params'])
     inst[0].wait_until_running()
     # override the current env.hosts since we are launching a new instance
     # NOTE: this seems like a convoluted way to get the IP address, but it works
@@ -116,7 +115,9 @@ def launch_ec2_instance():
     # this is a little hackish, but it ensures the next command will not
     # timeout because the server hasn't actually finished coming online yet...
     print("Waiting for instance to come online...")
+    sleep(45)
     with settings(hide('running'), warn_only=True):
+        # note: this is not actually a "reboot" but a "hostname" command
         execute(reboot, command='hostname', hosts=[
             'ubuntu@' + h for h in env.hosts ])
     print("New instance is now running at: {0}".format(env.hosts[0]))
@@ -299,11 +300,11 @@ def add_deploy_key():
     Add deployment keys.
     
     This command takes the private key referenced in 
-    AWS_CONFIG['deploy']['keyfile'] and uploads it to the server so it can
+    AWS_DEPLOY['deploy']['keyfile'] and uploads it to the server so it can
     access the GitHub repository (which needs to have
-    AWS_CONFIG['deploy']['keyfile_pub'] as a deployment key for this to work).
+    AWS_DEPLOY['deploy']['keyfile_pub'] as a deployment key for this to work).
     """
-    put(config.AWS_CONFIG['deploy']['keyfile'], '/home/adage/.ssh/id_rsa',
+    put(config.AWS_DEPLOY['deploy']['keyfile'], '/home/adage/.ssh/id_rsa',
         use_sudo=True, mode=0600)
     sudo('chown adage:adage /home/adage/.ssh/id_rsa')
 
@@ -370,6 +371,19 @@ def setup_nginx():
     sudo('rm -f /etc/nginx/sites-enabled/default')
     put('files/nginx/adage-nginx.conf',
         '/etc/nginx/sites-enabled/', use_sudo=True)
+    sudo('/etc/init.d/nginx restart')
+
+
+@task
+def tweak_nginx_for_dev():
+    """
+    Tweak the nginx configuration for use on a development server. In
+    production, we turn away requests with no Host header, but this is
+    inconvenient for a development server, which may not have a host name.
+    """
+    sudo("sed -i -e '1,/}/{h;d;};/./,$!d' "
+        "-e '/server_name/s/server_name .*;/server_name \"\";/' "
+        "/etc/nginx/sites-enabled/adage-nginx.conf")
     sudo('/etc/init.d/nginx restart')
 
 
@@ -462,36 +476,51 @@ def configure_adage():
     setup_sudo_restart_super()
 
 
-@task(alias='dev-ubuntu')
-def setup_dev_ubuntu_conn():
-    env.hosts = [ 'ubuntu@192.168.82.139' ]
-    env.key_filename = '~/.ssh/aws-clone.pem'
-
-
-@task(alias='dev-adage')
-def setup_dev_adage_conn():
-    # env.hosts = [ 'adage@192.168.82.139' ]
-    # env.key_filename = '~/.ssh/fgtech'
-    execute(adage_server.setup_ec2_conn)
-
-@task(default=True)
-def deploy():
+def _deploy(hostlist):
     """
     Execute a complete deployment to provision a new adage server
     (replaces steps.sh)
     """
-    execute(launch_ec2_instance)
-    # capture the IP address for the host we've just launched and build a hostlist
-    hosts = env.hosts
-    hostlist = [ 'ubuntu@' + h for h in hosts ]
+    logging.info("Deploying to hostlist: [" + ','.join(hostlist) + "]")
+    
     execute(configure_system, hosts=hostlist)
     execute(configure_adage, hosts=hostlist)
-    # now tweak the hostlist for remaining configuration via the adage user
-    hostlist = [ 'adage@' + h for h in hosts ]
-    print("hosts=%s" % hostlist)
-    # allow to default to adage_server CONFIG
-    execute(adage_server.setup_ec2_conn, hosts=hostlist)
-    execute(adage_server.deploy, hosts=hostlist)
+
+    # now we use the connection info specified in CONFIG['os'] to connect
+    # as that user (specify the host first) & then complete deployment
+    CONFIG['os']['host'] = hostlist[0].split(r'@')[1]
+    print_config()
+    execute(adage_server.setup_host_conn, use_conn=CONFIG['os'])
+    execute(adage_server.deploy, use_config=CONFIG)
+
+
+@task
+def deploy_aws():
+    """
+    Launch an EC2 instance using the parameters in config.py and deploy
+    to that server when it has spun up.
+    """
+    global CONFIG
+    CONFIG = config.AWS_CONFIG
+    execute(launch_ec2_instance)
+    # capture the IP address for the host we just launched and build a hostlist
+    hostlist = [ 'ubuntu@' + h for h in env.hosts ]
+    _deploy(hostlist)
+
+
+@task
+def deploy_dev():
+    """
+    Set up a connection to the currently-defined host_conn and deploy a
+    development configuration to it
+    """
+    global CONFIG
+    CONFIG = config.DEV_CONFIG
+    execute(adage_server.setup_host_conn, use_conn=CONFIG['host_conn'])
+    _deploy(env.hosts)
+    # _deploy switches to a different 'host_conn' so we need to reset here
+    execute(adage_server.setup_host_conn, use_conn=CONFIG['host_conn'])
+    execute(tweak_nginx_for_dev, hosts=env.hosts)
 
 
 @task(alias='resume')
@@ -501,3 +530,4 @@ def resumedeploy():
     # env.key_filename = ['~/.ssh/aws_ubuntu.pem']
     # hostlist=['ubuntu@<aws_public_ip>']
     # ---
+    pass
