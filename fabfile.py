@@ -43,7 +43,7 @@ from fabric.contrib.console import confirm
 
 # BASE_DIR is equivalent to a relative path of ../../adage-server/
 BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), 'adage-server-github'
+    os.path.abspath(__file__))), 'adage-server'
 )
 if BASE_DIR not in sys.path:
     sys.path.insert(0, os.path.join(BASE_DIR, 'fabfile'))
@@ -344,14 +344,14 @@ def clone_adage_repo():
     downloads *just* the get_pseudo_sdrf.py file from the get_pseudomonas
     repository for bootstrapping.
     """
-    sudo('git clone git@github.com:mhuyck/adage-server.git '
+    sudo('git clone {repo} '.format(**CONFIG) +
         '/home/adage/adage-server', user="adage")
     sudo('hg clone ssh://hg@bitbucket.org/greenelab/greenelab.bitbucket.org '
         '/home/adage/greenelab', user="adage")
     # this method is simpler but requires using a password, so it's 
     # less desirable --> 
     # run('wget -q https://bitbucket.org/greenelab/get_pseudomonas/raw/281f4fe00240e3effb4e5bc9a516e8a3716b9ede/get_pseudo_sdrf.py')
-    sudo('hg clone --noupdate ssh://hg@bitbucket.org/greenelab/get_pseudomonas '
+    sudo('hg clone --noupdate https://bitbucket.org/greenelab/get_pseudomonas '
         '/home/adage/temp', user="adage")
     sudo('hg cat /home/adage/temp/get_pseudo_sdrf.py --rev tip '
         '-o "/home/adage/%s"', user="adage")
