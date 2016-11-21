@@ -413,7 +413,9 @@ def setup_supervisor():
     """
     put('files/supervisord/adage_super.conf',
         '/etc/supervisor/conf.d/adage_super.conf', use_sudo=True)
-    sudo('sudo /etc/init.d/supervisor restart')
+    # systemctl now used for services in Ubuntu 16.04
+    sudo('systemctl enable supervisor')
+    sudo('systemctl start supervisor')
 
 
 @task
