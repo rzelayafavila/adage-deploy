@@ -1,3 +1,10 @@
 # README #
 
-Steps to deploy adage to Amazon's EC2 cloud. This uses fabric to automate tasks. Follow the commands in steps.sh putting in the relevant information where required.
+Steps to deploy [`adage-server`](https://github.com/greenelab/adage-server) to
+Amazon's EC2 cloud. This uses [fabric](http://www.fabfile.org) to automate
+tasks.
+
+## Usage ##
+
+Please follow the **Deployment Steps** found in the
+[README file for the `adage-server` repository](https://github.com/greenelab/adage-server#deployment-steps).
