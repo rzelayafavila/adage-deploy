@@ -22,7 +22,7 @@ from __future__ import with_statement
 import logging
 import os, sys
 import pprint
-from time import sleep
+import time
 from boto3.session import Session
 from fabric.api import put, get, run, sudo, execute, reboot
 from fabric.api import env, local, settings, hide, abort, task, runs_once
@@ -59,6 +59,12 @@ import config
 
 # Choose the configuration to use for the rest of this deployment from config.py
 CONFIG = config.CONFIG
+
+
+@task
+def v():
+    """ Turn on more verbose logging """
+    logging.basicConfig(level=logging.INFO)
 
 
 @task
@@ -115,7 +121,7 @@ def launch_ec2_instance():
     # this is a little hackish, but it ensures the next command will not
     # timeout because the server hasn't actually finished coming online yet...
     print("Waiting for instance to come online...")
-    sleep(45)
+    time.sleep(45)
     with settings(hide('running'), warn_only=True):
         # note: this is not actually a "reboot" but a "hostname" command
         execute(reboot, command='hostname', hosts=[
@@ -195,13 +201,17 @@ def install_system_packages():
     Install all python, postgres, elasticsearch, and other packages required to
     deploy and manage an Adage instance.
     """
+    # first, ensure we have latest versions of everything
     sudo('apt-get update')
+    sudo('apt-get -y -q upgrade')
+    sudo('apt-get -y -q dist-upgrade')
+    # now handle specific system packages we need
     execute(_install_elasticsearch)
     execute(_install_python_deps)
     execute(_install_postgres)
     sudo('apt-get -y -q install nodejs-legacy build-essential nginx npm '
-        'supervisor phantomjs')
-    sudo('npm -g install grunt-cli karma bower')
+        'supervisor')
+    sudo('npm -g install grunt-cli karma bower phantomjs-prebuilt')
 
 
 @task
@@ -309,6 +319,7 @@ def add_deploy_key():
     sudo('chown adage:adage /home/adage/.ssh/id_rsa')
 
 
+@task
 def add_known_hosts():
     """
     This command pre-populates the adage user's .ssh/known_hosts file so we
@@ -317,6 +328,7 @@ def add_known_hosts():
     """
     sudo('ssh-keyscan -t rsa github.com bitbucket.org > '
         '/home/adage/.ssh/known_hosts', user="adage")
+
 
 def create_deploy_keys():
     """
@@ -413,7 +425,9 @@ def setup_supervisor():
     """
     put('files/supervisord/adage_super.conf',
         '/etc/supervisor/conf.d/adage_super.conf', use_sudo=True)
-    sudo('sudo /etc/init.d/supervisor restart')
+    # systemctl now used for services in Ubuntu 16.04
+    sudo('systemctl enable supervisor')
+    sudo('systemctl start supervisor')
 
 
 @task
@@ -436,8 +450,8 @@ def configure_system():
     Configure all base system setup tasks we can do before setting up the
     adage user
     """
-    enable_unattended_updates()
     install_system_packages()
+    enable_unattended_updates()
     setup_elasticsearch()
 
 
@@ -484,6 +498,16 @@ def _deploy(hostlist):
     logging.info("Deploying to hostlist: [" + ','.join(hostlist) + "]")
     
     execute(configure_system, hosts=hostlist)
+    local('date')
+    # execute(reboot, hosts=hostlist)
+    with settings(warn_only=True):
+        print 'rebooting'
+        start_time = time.time()
+        execute(reboot, wait=1200, hosts=hostlist)
+        print 'reboot took: {} seconds'.format(time.time() - start_time)
+    local('date')
+    print("env.hosts: [" + ', '.join(env.hosts) + "]")
+    # run('uname -a')
     execute(configure_adage, hosts=hostlist)
 
     # now we use the connection info specified in CONFIG['os'] to connect
@@ -521,6 +545,15 @@ def deploy_dev():
     # _deploy switches to a different 'host_conn' so we need to reset here
     execute(adage_server.setup_host_conn, use_conn=CONFIG['host_conn'])
     execute(tweak_nginx_for_dev, hosts=env.hosts)
+
+
+@task
+def dropdb():
+    CONFIG = config.AWS_CONFIG
+    sqlstr = """echo "drop database {NAME};
+drop role {NAME};" """.format(**CONFIG['databases']['default'])
+    run(sqlstr + ' | psql --host={HOST} --username={USER}'.format(
+        sql=sqlstr, **CONFIG['dbmaster']))
 
 
 @task(alias='resume')
